@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reaction Trainer</title>
+<style>
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #1e1e1e;
+  color: #fff;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+}
+
+/* New style for the Stop button container */
+#gameHeader {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+}
+
+.screen {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+  text-align: center;
+  font-size: 24px;
+  background: #2a2a2a;
+  padding: 30px 40px;
+  border-radius: 12px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+}
+
+input[type=text], input[type=number] {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: none;
+  font-size: 16px;
+  width: 80px;
+  background: #3c3c3c;
+  color: white;
+}
+
+button {
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: none;
+  background: #4caf50;
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+}
+
+button:hover { 
+  background: #45a049; 
+  transform: translateY(-1px);
+}
+button:active {
+  transform: translateY(1px);
+}
+
+.desc-text {
+    font-size: 14px;
+    color: #bbb;
+}
+
+.letter-container {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+
+.letter-wrapper {
+  /* Updated size to accommodate the new radius (100) */
+  position: relative;
+  width: 250px; 
+  height: 250px;
+}
+
+.letter {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 80px;
+  font-weight: bold;
+  color: #fff;
+  z-index: 2;
+  transition: color 0.1s;
+}
+
+svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 250px; /* Must match wrapper size */
+  height: 250px; /* Must match wrapper size */
+  /* Rotate the SVG so the stroke starts at the top (visually intuitive) */
+  transform: rotate(-90deg); 
+}
+
+.progress-ring__circle {
+  fill: transparent;
+  stroke-width: 13; 
+  stroke-linecap: round;
+  transform-origin: center;
+  transition: stroke 0.1s linear;
+}
+
+.gray-circle {
+  fill: transparent;
+  stroke: #888;
+  /* 27.2 * 0.80 = 21.76 */
+  stroke-width: 21.76; 
+  stroke-linecap: round;
+}
+</style>
+</head>
+<body>
+
+<div id="setupScreen" class="screen">
+  <h2>Q, E, R, F Press Training</h2>
+  <label>
+    Number of letters to spawn (Type 'inf' for infinite):
+    <input type="text" id="numLetters" value="10">
+  </label>
+  <label>
+    <input type="checkbox" id="fixedCooldown"> Fixed letter press cooldown
+  </label>
+  <div class="desc-text">
+    Letter press cooldown is random between 1.3–0.9 seconds every round.
+  </div>
+  <div id="cooldownOptions" style="display:none;">
+    <label>
+      Cooldown (0.9–1.3s):
+      <input type="number" id="fixedCooldownValue" value="1.1" min="0.9" max="1.3" step="0.1">
+    </label>
+  </div>
+  <button id="startBtn">Start</button>
+</div>
+
+<div id="gameHeader" style="display:none;">
+    <button id="stopBtn">Stop</button>
+</div>
+
+<div id="pressKeyScreen" class="screen" style="display:none;">
+  Press any key to start
+</div>
+
+<div class="letter-container" id="letterContainer" style="display:none;">
+  <div class="letter-wrapper">
+    <svg>
+      <!-- Center moved to 125 for 250px wrapper -->
+      <circle class="gray-circle" cx="125" cy="125" r="55"></circle> 
+      <!-- Center moved to 125 for 250px wrapper. Radius updated in JS -->
+      <circle id="progressCircle" class="progress-ring__circle" stroke="red" cx="125" cy="125" r="80"></circle>
+    </svg>
+    <div class="letter" id="letter"></div>
+  </div>
+</div>
+
+<div id="resultsScreen" class="screen" style="display:none;">
+  <h2>Game Over!</h2>
+  <div id="results"></div>
+  <button id="restartBtn">Restart</button>
+</div>
+
+<script>
+const keys = ['Q','E','R','F'];
+const letterEl = document.getElementById('letter');
+const letterContainer = document.getElementById('letterContainer');
+const progressCircle = document.getElementById('progressCircle');
+const setupScreen = document.getElementById('setupScreen');
+const pressKeyScreen = document.getElementById('pressKeyScreen');
+const resultsScreen = document.getElementById('resultsScreen');
+const resultsEl = document.getElementById('results');
+const restartBtn = document.getElementById('restartBtn');
+const numLettersInput = document.getElementById('numLetters');
+const fixedCooldownCheckbox = document.getElementById('fixedCooldown');
+const fixedCooldownValueInput = document.getElementById('fixedCooldownValue');
+const cooldownOptions = document.getElementById('cooldownOptions');
+const gameHeader = document.getElementById('gameHeader');
+const stopBtn = document.getElementById('stopBtn');
+
+// Game state variables
+let activeKey = null;
+let cooldown = 1100;
+let cooldownInterval;
+let missGraceTimeout; 
+let fullShrinkTimeout; 
+let nextSpawnTimeout; // Timer for the 250ms pause between rounds
+let totalLetters = 10;
+let lettersSpawned = 0;
+let greenHits = 0;
+let redHits = 0;
+let gameStarted = false;
+let waitingForKeyPress = false;
+
+// --- New and Updated Radii/Stroke Constants ---
+const radiusStart = 100; 
+const radiusGray = 55;  
+const strokeWidthRed = 13;
+const strokeWidthGray = 21.76; // Updated: 20% less than 27.2 (21.76)
+
+const wrapperSize = 250; 
+const radiusMin = radiusGray; 
+const radiusRange = radiusStart - radiusMin; // 100 - 55 = 45
+
+// Calculated the visual touch point where the red circle's inner edge touches the gray circle's outer edge
+// 55 + (13 / 2) + (21.76 / 2) = 55 + 6.5 + 10.88 = 72.38
+const radiusTouch = radiusGray + (strokeWidthRed / 2) + (strokeWidthGray / 2); 
+
+fixedCooldownCheckbox.addEventListener('change', () => {
+  cooldownOptions.style.display = fixedCooldownCheckbox.checked ? 'block' : 'none';
+});
+
+/**
+ * Stops all timers and transitions to the Game Over screen.
+ * Used for both natural game end and when the Stop button is pressed.
+ */
+function stopGameAndShowResults(wasStopped = false) {
+    // Clear all timers
+    clearTimeout(missGraceTimeout); 
+    clearTimeout(fullShrinkTimeout);
+    clearInterval(cooldownInterval);
+    clearTimeout(nextSpawnTimeout);
+    
+    // Reset state
+    gameStarted = false;
+    waitingForKeyPress = false;
+    activeKey = null;
+
+    // Hide game elements and Stop button
+    gameHeader.style.display = 'none';
+    letterContainer.style.display = 'none';
+
+    // Prepare and show results screen
+    let resultText = `✅ Correct: ${greenHits} / ${lettersSpawned}`;
+    if (totalLetters !== Infinity) {
+        resultText = `✅ Correct: ${greenHits} / ${totalLetters}<br>❌ Incorrect: ${redHits} / ${totalLetters}`;
+    } else if (wasStopped) {
+        resultText = `Game stopped after ${lettersSpawned} rounds.<br>✅ Correct: ${greenHits}<br>❌ Incorrect: ${redHits}`;
+    }
+
+    resultsEl.innerHTML = resultText;
+    resultsScreen.style.display = 'flex';
+}
+
+
+function spawnLetter() {
+  // Clear ALL timers before starting the new round
+  clearTimeout(missGraceTimeout); 
+  clearTimeout(fullShrinkTimeout);
+  clearInterval(cooldownInterval);
+  clearTimeout(nextSpawnTimeout); // Clear any pending next spawn
+
+  // Check for game completion
+  if (totalLetters !== Infinity && lettersSpawned >= totalLetters) {
+    stopGameAndShowResults(false);
+    return;
+  }
+
+  lettersSpawned++;
+  activeKey = keys[Math.floor(Math.random() * keys.length)];
+  letterEl.textContent = activeKey;
+  letterEl.style.color = "#fff";
+  letterContainer.style.display = 'flex';
+
+  // Randomly position the letter container based on the new wrapper size
+  letterContainer.style.top = Math.random() * (window.innerHeight - wrapperSize) + 'px';
+  letterContainer.style.left = Math.random() * (window.innerWidth - wrapperSize) + 'px';
+
+  let start = Date.now();
+  progressCircle.setAttribute("r", radiusStart);
+  progressCircle.setAttribute("stroke", "red");
+
+  // 1. Start the visual update loop
+  cooldownInterval = setInterval(() => {
+    let elapsed = Date.now() - start;
+    let progress = elapsed / cooldown;
+    if (progress > 1) progress = 1;
+
+    // Calculate new radius, clamping it at radiusMin (55)
+    let newRadius = radiusStart - radiusRange * progress; 
+    if (newRadius < radiusMin) newRadius = newRadius; // Use the calculated min radius
+    
+    progressCircle.setAttribute("r", newRadius);
+
+    const tolerance = 0.5;
+
+    // The circle turns green when it visually touches the gray circle (radiusTouch)
+    if (newRadius <= radiusTouch + tolerance) {
+      progressCircle.setAttribute("stroke", "lime");
+    } else {
+      progressCircle.setAttribute("stroke", "red");
+    }
+    
+  }, 20);
+
+  // 2. Set the main timeout for when the circle should finish shrinking
+  fullShrinkTimeout = setTimeout(() => {
+    // 2a. Stop the visual updates
+    clearInterval(cooldownInterval);
+
+    // 2b. Start the 100ms grace period for a miss
+    missGraceTimeout = setTimeout(() => {
+        // 2c. Grace period expired (MISS)
+        letterEl.style.color = "red"; // Letter turns red (Visual feedback for miss)
+        redHits++;
+        activeKey = null; // Miss happened, disable further inputs
+        
+        // PAUSE: Start 250ms delay, hiding container only after the delay
+        nextSpawnTimeout = setTimeout(() => {
+            letterContainer.style.display = 'none'; // Hide after 250ms
+            spawnLetter(); 
+        }, 250);
+    }, 100); 
+  }, cooldown); // Uses the full calculated cooldown duration
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!gameStarted && waitingForKeyPress) {
+    // Game start logic
+    waitingForKeyPress = false;
+    pressKeyScreen.style.display = 'none';
+    letterContainer.style.display = 'flex';
+    gameStarted = true;
+    lettersSpawned = 0;
+    greenHits = 0;
+    redHits = 0;
+    gameHeader.style.display = 'flex'; // Show stop button
+    spawnLetter();
+    return;
+  }
+
+  const key = e.key.toUpperCase();
+  if (!activeKey || !keys.includes(key)) return;
+
+  // Stop ALL timers immediately when a key is pressed (SUCCESS or FAIL)
+  clearInterval(cooldownInterval);
+  clearTimeout(missGraceTimeout); 
+  clearTimeout(fullShrinkTimeout);
+
+  // Hit Logic: 
+  if (key === activeKey) {
+    // Check if the current circle stroke color is 'lime' (Green Window)
+    if (progressCircle.getAttribute('stroke') === 'lime') { 
+      // Correct Key + Green Window = SUCCESS
+      letterEl.style.color = "lime";
+      greenHits++;
+    } else {
+      // Correct Key + Red Window (Too Early) = MISS
+      letterEl.style.color = "red";
+      redHits++;
+    }
+  } else {
+    // Incorrect Key = MISS
+    letterEl.style.color = "red";
+    redHits++;
+  }
+
+  activeKey = null;
+  // PAUSE: Start 250ms delay, hiding container only after the delay
+  nextSpawnTimeout = setTimeout(() => {
+      letterContainer.style.display = 'none'; // Hide after 250ms
+      spawnLetter();
+  }, 250);
+});
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  const numInput = numLettersInput.value.trim().toUpperCase();
+  if (numInput === 'INF' || numInput === 'INFINITY') {
+    totalLetters = Infinity;
+  } else {
+    totalLetters = parseInt(numInput) || 10;
+    if (totalLetters < 1) totalLetters = 1; // Ensure a minimum of 1
+  }
+
+  if (fixedCooldownCheckbox.checked) {
+    let fixedVal = parseFloat(fixedCooldownValueInput.value);
+    if (isNaN(fixedVal) || fixedVal < 0.9 || fixedVal > 1.3) fixedVal = 1.1;
+    cooldown = fixedVal * 1000;
+  } else {
+    // Generate random cooldown between 900ms and 1300ms
+    cooldown = Math.random() * 400 + 900; 
+  }
+
+  setupScreen.style.display = 'none';
+  pressKeyScreen.style.display = 'flex';
+  waitingForKeyPress = true;
+});
+
+stopBtn.addEventListener('click', () => {
+    // When the user manually stops the game
+    stopGameAndShowResults(true); 
+});
+
+restartBtn.addEventListener('click', () => {
+  gameStarted = false;
+  lettersSpawned = 0;
+  greenHits = 0;
+  redHits = 0;
+  clearTimeout(missGraceTimeout);
+  clearTimeout(fullShrinkTimeout);
+  clearInterval(cooldownInterval);
+  clearTimeout(nextSpawnTimeout);
+  gameHeader.style.display = 'none'; // Ensure stop button is hidden
+  setupScreen.style.display = 'flex';
+  resultsScreen.style.display = 'none';
+});
+</script>
+</body>
+</html>
